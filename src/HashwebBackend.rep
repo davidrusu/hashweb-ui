@@ -1,0 +1,139 @@
+class HashwebBackend
+{
+    ENUM HubStatus {
+        Stopped = 0,
+        Initialising = 1,
+        Online = 2,
+        Error = 3,
+        Offline = 4
+    }
+
+    PROP(HubStatus hubStatus READONLY)
+    PROP(QString statusMessage READONLY)
+    PROP(QString spaceId READONLY)
+    PROP(bool offline READONLY)
+    // The open page's kv object id ("" = no page selected) and its title.
+    PROP(QString currentPage READONLY)
+    PROP(QString pageTitle READONLY)
+    // The open page's comment threads (hub kb_comments JSON).
+    PROP(QString commentsJson READONLY)
+    // Concurrent title values when the register is in MVR conflict
+    // (JSON array of strings; empty = no conflict).
+    PROP(QString titleConflictJson READONLY)
+    // The page's recursive layout tree (hub kb_page_blocks "tree"),
+    // updated ONLY on structural change — text/spans/embeds updates ride
+    // the blockUpdated signal so typing never rebuilds the delegates.
+    PROP(QString layoutJson READONLY)
+    // Spaces this hub has joined before (JSON array of ids) — the landing
+    // page's one-click rejoin list.
+    PROP(QString recentSpacesJson READONLY)
+
+    SLOT(void joinSpace(QString spaceId))
+    // Leave the current space (hub persists + unsubscribes) and return to
+    // the landing page.
+    SLOT(void leaveSpace())
+    SLOT(void toggleOffline(bool offline))
+
+    // --- pages (kb.js page graph: workspace kv + containment registers) ---
+    SLOT(void openPage(QString pageObj))
+    SLOT(void newPage())      // under the workspace root
+    SLOT(void newSubpage())   // under the current page
+    SLOT(void deletePage())   // the current page (QML arms the confirm)
+    SLOT(void renamePage(QString title))
+    // Sidebar drag (kb.js renderTree): zone in above|below|into. Same-list
+    // reorders are ONE Move op; cross-list reparents are a fresh link +
+    // claim (the old atom goes dead by the membership rule, never removed);
+    // "into" makes src a subpage of target. Dropping a page into its own
+    // subtree is refused (it would orphan the subtree).
+    SLOT(void dropPage(QString srcObj, QString targetObj, QString zone))
+    // Enter in the title: open a fresh first block (kb.js title keydown).
+    SLOT(void titleEnter())
+
+    // --- blocks ---
+    // One contiguous text edit within a block: `removed` chars at `pos`
+    // replaced by `inserted`. `object` is the block's seq object id.
+    SLOT(void applyBlockEdit(QString object, int pos, int removed, QString inserted))
+    // Enter: split the block at `caret` into a new sibling below (an empty
+    // list item exits the list instead — the universal idiom).
+    SLOT(void splitBlock(QString object, int caret))
+    // Backspace at offset 0: unwrap a list item, else merge into the
+    // previous leaf; an empty block just deletes.
+    SLOT(void joinBlock(QString object))
+    // blockKind register on the page kv: "" | bullet | number.
+    SLOT(void setBlockKind(QString origin, QString kind))
+    // Marks over a block range (kb.js selection toolbar / input rules).
+    SLOT(void markBlockRange(QString object, int start, int end, QString kind, QString value))
+    SLOT(void unmarkBlockRange(QString object, int start, int end, QString kind))
+
+    // --- images (content-addressed artifacts) ---
+    // Read an image file, store it as a content-addressed artifact, and
+    // give it an IMAGE BLOCK: the ref atom lands in `object` if that block
+    // is empty, else in a fresh sibling leaf right below it. (No inline
+    // images — an image is always its own block.) The 0xAF frame
+    // broadcasts the bytes. `fileUrl` is a file:// URL or plain path.
+    SLOT(void insertImage(QString object, QString fileUrl))
+    // Fetch an artifact's bytes for display; answered by imageData with a
+    // data: URL ("" when unresolved / not an image).
+    SLOT(void requestImage(QString artifactId))
+
+
+    // --- comments (comment:<tag> marks; the tag is the thread's origin) ---
+    SLOT(void addComment(QString object, int start, int end))
+    SLOT(void replyComment(QString tag, QString text))
+    // Tombstone every fragment of the comment (kb.js RESOLVE).
+    SLOT(void resolveComment(QString tag))
+
+    // --- tables (a seq of row refs; rows of cell refs; cells text seqs) ---
+    SLOT(void insertTable(QString object, int pos))
+    SLOT(void tableAddRow(QString tableOrigin))
+    SLOT(void tableAddCol(QString tableOrigin))
+
+    // --- structure ---
+    // Embed a page link atom at `pos` (payload = the page's OBJECT id).
+    SLOT(void insertPageLink(QString object, int pos, QString pageObj))
+    // Move a block one slot up/down among its parent's live children —
+    // a fresh link + claim (kb.js: a move is insertChildAt), never a delete.
+    SLOT(void moveBlock(QString object, int delta))
+    // Drop the dragged leaf beside the target (kb.js dropOnLeaf): dir in
+    // left|right|top|bottom. Parallel to the target's parent axis =
+    // sibling insert; perpendicular = wrap both in a new container (one
+    // level deeper, so it arranges the other way). Normalizes after.
+    SLOT(void dropBlock(QString srcOrigin, QString targetOrigin, QString dir))
+    // Drop onto empty space: the leaf becomes the body's last child.
+    SLOT(void dropToEnd(QString srcOrigin))
+    // kb.js addBlockAtEnd: a fresh leaf as the body's last child.
+    SLOT(void addBlockAtEnd())
+    // Slash-menu block conversions (kb.js makeHeading / makeBlockKind).
+    SLOT(void makeHeading(QString object))
+    SLOT(void makeBlockRegion(QString object, QString kind))
+    // Slash from a NON-empty block: a fresh sibling right after `object`,
+    // pre-shaped as `act` (heading/codeblock/eqblock/bullet/number/table),
+    // focused for typing.
+    SLOT(void insertBlockAfter(QString object, QString act))
+    // Multi-line clipboard text lands as parsed markdown: paragraphs,
+    // headings, lists, fenced code (with language), display math, and
+    // inline **bold** / *italic* / `code` / $math$ become blocks + marks.
+    SLOT(void pasteMarkdown(QString object, int pos, QString md))
+
+    // Live peers in this space (ephemeral, delivery-layer presence):
+    // JSON array of {sid,name,color,page,block,caret}, own session
+    // filtered out. Refreshed on a heartbeat.
+    PROP(QString presenceJson READONLY)
+    // Announce this editor's position; also re-sent as the heartbeat.
+    SLOT(void announcePresence(QString page, QString block, int caret))
+    // The alias peers see (never an OS identity — presence must not dox).
+    SLOT(void setHandle(QString handle))
+
+    SIGNAL(error(QString message))
+    // A block's content changed underneath the editor (remote edit, or our
+    // own echo) while the layout structure stayed put. Delegates apply it
+    // unless they hold focus with edits in flight.
+    SIGNAL(blockUpdated(QString object, QString text, QString spans, QString embeds))
+    // Put the caret in this block at `caret` after a structural change.
+    SIGNAL(focusBlock(QString object, int caret))
+    // Focus the title field (after newPage).
+    SIGNAL(focusTitle())
+    // Answer to requestImage: a data: URL, cacheable forever (content-
+    // addressed), or "" when the artifact is unresolved / not an image.
+    SIGNAL(imageData(QString artifactId, QString dataUrl))
+}

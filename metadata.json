@@ -1,0 +1,34 @@
+{
+  "name": "hashweb_ui",
+  "display_name": "HashWeb",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "category": "documents",
+  "description": "HashWeb document editor (single-object v1): collaborative text over Logos Delivery",
+  "main": "hashweb_ui_plugin",
+  "view": "qml/HashwebView.qml",
+  "dependencies": ["hashweb_module", "delivery_module"],
+
+  "codegen": {
+    "rep": "src/HashwebBackend.rep",
+    "backend_class": "HashwebBackend",
+    "backend_header": "HashwebBackend.h"
+  },
+
+  "dependency_overrides": {
+    "delivery_module": {
+      "input": "hashweb_module",
+      "file": "rust-lib/deps/delivery_module.lidl"
+    }
+  },
+
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": ["qt6.qtdeclarative", "zstd", "krb5", "abseil-cpp"]
+    },
+    "external_libraries": [],
+    "cmake": { "find_packages": [], "extra_sources": [] }
+  }
+}
