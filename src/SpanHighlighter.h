@@ -109,6 +109,9 @@ private:
     }
     void refresh();
     void lexLine(const QString &text);
+    // Reserve embed atoms' chip widths in the layout via the inline
+    // text-object handler (U+FFFC is object-itemized; fonts can't size it).
+    void applyEmbedFormats();
 
     QQuickTextDocument *m_quickDoc = nullptr;
     QString m_spansJson;

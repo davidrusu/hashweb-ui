@@ -1,7 +1,7 @@
 {
   "name": "hashweb_ui",
   "display_name": "HashWeb",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "ui_qml",
   "interface": "universal",
   "category": "documents",

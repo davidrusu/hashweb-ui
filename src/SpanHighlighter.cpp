@@ -1,8 +1,12 @@
 #include "SpanHighlighter.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDir>
+#include <QPainter>
+#include <QTextCursor>
+#include <QTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetricsF>
@@ -27,7 +31,18 @@ void SpanHighlighter::setQuickDocument(QQuickTextDocument *doc)
     if (doc == m_quickDoc)
         return;
     m_quickDoc = doc;
-    setDocument(doc ? doc->textDocument() : nullptr);
+    QTextDocument *td = doc ? doc->textDocument() : nullptr;
+    setDocument(td);
+    if (td) {
+        // Text resets (setPlainText) wipe char formats — re-apply the
+        // embed object formats after every change. Deferred out of the
+        // change notification; idempotent, so its own setCharFormat
+        // doesn't loop.
+        connect(td, &QTextDocument::contentsChanged, this,
+                [this] { QTimer::singleShot(0, this,
+                                            [this] { applyEmbedFormats(); }); });
+    }
+    applyEmbedFormats();
     emit documentChanged();
 }
 
@@ -155,6 +170,7 @@ void SpanHighlighter::setEmbedsJson(const QString &json)
         const QJsonObject o = v.toObject();
         m_embeds.append({o.value("pos").toInt(), o.value("w").toDouble()});
     }
+    applyEmbedFormats();
     emit embedsJsonChanged();
     refresh();
 }
@@ -335,19 +351,57 @@ void SpanHighlighter::highlightBlock(const QString &text)
         setFormat(from, to - from, fmt);
     }
 
-    // Embed atoms (U+FFFC) squeeze to their chip's width — same conceal
-    // trick as math, but always on (an atom has no source form to edit).
+    // (Embed atoms are widened via the KbEmbedHandler text-object route,
+    // not here: U+FFFC is itemized as an inline OBJECT by the text engine,
+    // so font tricks like letter-spacing never touch its advance.)
+}
+
+// The layout asks this handler how wide each embed atom is; the QML chip
+// overlay draws the visual. drawObject paints nothing on purpose.
+class KbEmbedHandler : public QObject, public QTextObjectInterface
+{
+    Q_OBJECT
+    Q_INTERFACES(QTextObjectInterface)
+public:
+    QSizeF intrinsicSize(QTextDocument *, int, const QTextFormat &format) override
+    {
+        return QSizeF(format.property(kEmbedWidthProp).toDouble(), 18);
+    }
+    void drawObject(QPainter *, const QRectF &, QTextDocument *, int,
+                    const QTextFormat &) override
+    {
+    }
+    static constexpr int kEmbedObjectType = QTextFormat::UserObject + 7001;
+    static constexpr int kEmbedWidthProp = QTextFormat::UserProperty + 7001;
+    static KbEmbedHandler *instance()
+    {
+        static KbEmbedHandler h;
+        return &h;
+    }
+};
+
+void SpanHighlighter::applyEmbedFormats()
+{
+    QTextDocument *doc = document();
+    if (!doc)
+        return;
+    doc->documentLayout()->registerHandler(KbEmbedHandler::kEmbedObjectType,
+                                           KbEmbedHandler::instance());
     for (const auto &e : m_embeds) {
-        const int local = e.first - base;
-        if (local < 0 || local >= blockLen)
+        if (e.first < 0 || e.first >= doc->characterCount() - 1)
             continue;
-        const qreal adv = QFontMetricsF(document()->defaultFont())
-                              .horizontalAdvance(text.at(local));
+        QTextCursor c(doc);
+        c.setPosition(e.first);
+        c.setPosition(e.first + 1, QTextCursor::KeepAnchor);
+        const QTextCharFormat cur = c.charFormat();
+        if (cur.objectType() == KbEmbedHandler::kEmbedObjectType
+            && qFuzzyCompare(cur.property(KbEmbedHandler::kEmbedWidthProp).toDouble(),
+                             e.second))
+            continue; // already shaped — keeps the contentsChanged hook a no-op
         QTextCharFormat fmt;
-        fmt.setForeground(Qt::transparent);
-        fmt.setFontLetterSpacingType(QFont::AbsoluteSpacing);
-        fmt.setFontLetterSpacing(qMax(e.second - adv, 0.5 - adv));
-        setFormat(local, 1, fmt);
+        fmt.setObjectType(KbEmbedHandler::kEmbedObjectType);
+        fmt.setProperty(KbEmbedHandler::kEmbedWidthProp, e.second);
+        c.setCharFormat(fmt);
     }
 }
 
